@@ -124,7 +124,12 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, all
 	if signedDescStr == "" {
 		return fmt.Errorf("Cannot find valid signed descriptor")
 	}
-	signedDesc, err := base64.StdEncoding.DecodeString(signedDescStr)
+	signedDescBytes, err := base64.StdEncoding.DecodeString(signedDescStr)
+	if err != nil {
+		return err
+	}
+	var signedDesc v1.Descriptor
+	err = json.Unmarshal(signedDescBytes, &signedDesc)
 	if err != nil {
 		return err
 	}
@@ -150,7 +155,7 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, all
 	defer os.Remove(sigFile.Name())
 
 	cmd := exec.Command("ssh-keygen", "-Y", "verify", "-f", allowed, "-I", identity, "-n", namespace, "-s", sigFile.Name())
-	cmd.Stdin = bytes.NewReader(signedDesc)
+	cmd.Stdin = bytes.NewReader(signedDescBytes)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err = cmd.Run()
@@ -167,6 +172,62 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, all
 	}
 
 	// note we need to reverify descriptor after signature check!
-
+	// everything in the descriptor should be in the signed descriptor
+	// it is ok if there are more fields in the signed descriptor, eg expiry
+	// perhaps we should sort arrays before comparing?
+	if signedDesc.MediaType != verifyDesc.MediaType {
+		return fmt.Errorf("Mismatch in media type in descriptor: signed %s verify %s", signedDesc.MediaType, verifyDesc.MediaType)
+	}
+	if signedDesc.Size != verifyDesc.Size {
+		return fmt.Errorf("Mismatch in size in descriptor: signed %d verify %d", signedDesc.Size, verifyDesc.Size)
+	}
+	if signedDesc.Digest.Algorithm != verifyDesc.Digest.Algorithm {
+		return fmt.Errorf("Mismatch in hash type in descriptor: signed %s verify %s", signedDesc.Digest.Algorithm, verifyDesc.Digest.Algorithm)
+	}
+	if signedDesc.Digest.Hex != verifyDesc.Digest.Hex {
+		return fmt.Errorf("Mismatch in hash in descriptor: signed %s verify %s", signedDesc.Digest.Hex, verifyDesc.Digest.Hex)
+	}
+	// we do not check Data in descriptor as any use of it will check it against hash
+	if len(signedDesc.URLs) != len(verifyDesc.URLs) {
+		return fmt.Errorf("Mismatch in number of URLs in descriptor: signed %d verify %d", len(signedDesc.URLs), len(verifyDesc.URLs))
+	}
+	for i, u := range verifyDesc.URLs {
+		if u != signedDesc.URLs[i] {
+			return fmt.Errorf("Mismatch in URL in descriptor: signed %s verify %s", signedDesc.URLs[i], u)
+		}
+	}
+	if signedDesc.Platform.Architecture != verifyDesc.Platform.Architecture {
+		return fmt.Errorf("Mismatch platform architecture in descriptor: signed %s verify %s", signedDesc.Platform.Architecture, verifyDesc.Platform.Architecture)
+	}
+	if signedDesc.Platform.OS != verifyDesc.Platform.OS {	
+		return fmt.Errorf("Mismatch platform OS in descriptor: signed %s verify %s", signedDesc.Platform.OS, verifyDesc.Platform.OS)
+	}
+	if signedDesc.Platform.OSVersion != verifyDesc.Platform.OSVersion {
+		return fmt.Errorf("Mismatch platform OS version in descriptor: signed %s verify %s", signedDesc.Platform.OSVersion, verifyDesc.Platform.OSVersion)
+	}
+	if signedDesc.Platform.Variant != verifyDesc.Platform.Variant {
+		return fmt.Errorf("Mismatch platform variant in descriptor: signed %s verify %s", signedDesc.Platform.Variant, verifyDesc.Platform.Variant)
+	}
+	if len(signedDesc.Platform.OSFeatures) != len(verifyDesc.Platform.OSFeatures) {
+		return fmt.Errorf("Mismatch in number of OS features in descriptor: signed %d verify %d", len(signedDesc.Platform.OSFeatures), len(verifyDesc.Platform.OSFeatures))
+	}
+	for i, f := range verifyDesc.Platform.OSFeatures {
+		if f != signedDesc.Platform.OSFeatures[i] {
+			return fmt.Errorf("Mismatch in OS feature in descriptor: signed %s verify %s", signedDesc.Platform.OSFeatures[i], f)
+		}
+	}
+	if len(signedDesc.Platform.Features) != len(verifyDesc.Platform.Features) {
+		return fmt.Errorf("Mismatch in number of features in descriptor: signed %d verify %d", len(signedDesc.Platform.Features), len(verifyDesc.Platform.Features))
+	}
+	for i, f := range verifyDesc.Platform.Features {
+		if f != signedDesc.Platform.Features[i] {
+			return fmt.Errorf("Mismatch in feature in descriptor: signed %s verify %s", signedDesc.Platform.Features[i], f)
+		}
+	}
+	for k, v := range verifyDesc.Annotations {
+		if signedDesc.Annotations[k] != v {
+			return fmt.Errorf("Mismatch in annotation %s in descriptor: signed %s verify %s", k, signedDesc.Annotations[k], v)
+		}
+	}
 	return nil
 }
