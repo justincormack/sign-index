@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/justincormack/sign-index/pkg/signing"
 	"github.com/justincormack/sign-index/pkg/util"
@@ -18,14 +17,15 @@ func main() {
 	var signer string
 	var allowed string
 
-	flag.StringVar(&platformName, "platform", util.DefaultPlatformName(), "Specifies the platform in the form os/arch[/variant] (e.g. linux/amd64).")
+	flag.StringVar(&platformName, "platform", util.DefaultPlatformName(), "Specifies the platform os/arch[/variant] to pull (e.g. linux/amd64)")
 	// TODO read from metadata
 	flag.StringVar(&signer, "signer", "", "Person expected to have signed the image")
 	flag.StringVar(&allowed, "allowed", "", "File containing allowed keys (ssh format)")
 
 	flag.Parse()
 
-	platform, err := util.ParsePlatform(platformName)
+	// TODO platform, err
+	_, err := util.ParsePlatform(platformName)
 	if err != nil {
 		fmt.Println("Cannot parse platform: ", err)
 		os.Exit(1)
@@ -62,28 +62,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// find the descriptor matching the architecture
-	var match v1.Descriptor
-	var found bool
 	for _, d := range manifest.Manifests {
-		if d.Platform != nil && platform.Equals(*d.Platform) {
-			match = d
-			found = true
-			break
+		err = signing.Verify(manifest.Annotations, d, signer, allowed)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
 		}
 	}
-	if !found {
-		fmt.Println("Cannot find matching platform to ", platform)
-		os.Exit(1)
-	}
 
-	err = signing.Verify(manifest.Annotations, match, signer, allowed)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	fmt.Println("Validated signature")
+	fmt.Printf("Validated signatures for all %d images in index\n", len(manifest.Manifests))
 
 	// pull in Docker
 }
