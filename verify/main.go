@@ -14,12 +14,9 @@ import (
 
 func main() {
 	var platformName string
-	var signer string
 	var allowed string
 
 	flag.StringVar(&platformName, "platform", util.DefaultPlatformName(), "Specifies the platform os/arch[/variant] to pull (e.g. linux/amd64)")
-	// TODO read from metadata
-	flag.StringVar(&signer, "signer", "", "Person expected to have signed the image")
 	flag.StringVar(&allowed, "allowed", "", "File containing allowed keys (ssh format)")
 
 	flag.Parse()
@@ -63,7 +60,7 @@ func main() {
 	}
 
 	for _, d := range manifest.Manifests {
-		err = signing.Verify(manifest.Annotations, d, signer, allowed)
+		err = signing.Verify(manifest.Annotations, d, allowed)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)

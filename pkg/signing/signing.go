@@ -32,11 +32,14 @@ const SignatureType = "org.notaryproject.signature.type"
 // SignatureData is the actual signature
 const SignatureData = "org.notaryproject.signature.data"
 
+// SignatureIdentity is a hint for the identity of the signer
+const SignatureIdentity = "org.notaryproject.signature.identity"
+
 // ssh namespace. We could just use "container" I guess too.
 const namespace = "org.notaryproject.sign"
 
 // Sign signs a given descriptor, returning annotations to add to the image index
-func Sign(tp string, d v1.Descriptor, keyFile string) (map[string]string, error) {
+func Sign(tp string, d v1.Descriptor, keyFile string, identity string) (map[string]string, error) {
 
 	// we are going to sign the descriptor as JSON bytes
 	data, err := json.Marshal(d)
@@ -50,14 +53,14 @@ func Sign(tp string, d v1.Descriptor, keyFile string) (map[string]string, error)
 
 	switch tp {
 	case "ssh":
-		return SignSSH(data, suffix, keyFile)
+		return SignSSH(data, suffix, keyFile, identity)
 	default:
 		return nil, fmt.Errorf("Unsupported signature type: %s", tp)
 	}
 }
 
 // SignSSH signs using ssh signature, shells out to ssh-keygen.
-func SignSSH(data []byte, suffix string, keyFile string) (map[string]string, error) {
+func SignSSH(data []byte, suffix string, keyFile string, identity string) (map[string]string, error) {
 	if keyFile == "" {
 		return nil, fmt.Errorf("Must specify keyfile for signing key")
 	}
@@ -67,6 +70,9 @@ func SignSSH(data []byte, suffix string, keyFile string) (map[string]string, err
 
 	// version
 	a[SignatureVersion+suffix] = Version
+
+	// identity
+	a[SignatureIdentity+suffix] = identity
 
 	// we store the signed descriptor as base64 in an annotation
 	a[Descriptor+suffix] = base64.StdEncoding.EncodeToString(data)
@@ -89,7 +95,7 @@ func SignSSH(data []byte, suffix string, keyFile string) (map[string]string, err
 }
 
 // Verify will check a signature in the provided annotations against the provided descriptor
-func Verify(a map[string]string, verifyDesc v1.Descriptor, signer string, allowed string) error {
+func Verify(a map[string]string, verifyDesc v1.Descriptor, allowed string) error {
 	digest := verifyDesc.Digest.String()
 	suffix := "." + digest
 
@@ -106,14 +112,14 @@ func Verify(a map[string]string, verifyDesc v1.Descriptor, signer string, allowe
 	case "":
 		return fmt.Errorf("Cannot find valid signature for digest %s (missing type)", digest)
 	case "ssh":
-		return VerifySSH(a, suffix, verifyDesc, signer, allowed)
+		return VerifySSH(a, suffix, verifyDesc, allowed)
 	default:
 		return fmt.Errorf("Unknown signature type: %s", tp)
 	}
 
 }
 
-func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, signer string, allowed string) error {
+func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, allowed string) error {
 	signedDescStr := a[Descriptor+suffix]
 	if signedDescStr == "" {
 		return fmt.Errorf("Cannot find valid signed descriptor")
@@ -127,6 +133,7 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, sig
 	if err != nil {
 		return err
 	}
+	identity := a[SignatureIdentity+suffix]
 
 	// save signature to a temporary file
 	sigFile, err := ioutil.TempFile("", "sig")
@@ -142,7 +149,7 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, sig
 	sigFile.Close()
 	defer os.Remove(sigFile.Name())
 
-	cmd := exec.Command("ssh-keygen", "-Y", "verify", "-f", allowed, "-I", signer, "-n", namespace, "-s", sigFile.Name())
+	cmd := exec.Command("ssh-keygen", "-Y", "verify", "-f", allowed, "-I", identity, "-n", namespace, "-s", sigFile.Name())
 	cmd.Stdin = bytes.NewReader(signedDesc)
 	var out bytes.Buffer
 	cmd.Stdout = &out

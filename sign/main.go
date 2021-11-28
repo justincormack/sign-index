@@ -20,10 +20,13 @@ func main() {
 	var tp string
 	var keyFile string
 	var putName string
+	var identity string
 
 	flag.StringVar(&tp, "type", "ssh", "Type of signing key (currently supports ssh).")
 	flag.StringVar(&keyFile, "keyfile", "", "File containing key to sign with")
 	flag.StringVar(&putName, "put", "", "New name to use when pushing rather than overwrite original manifest")
+	// TODO we could parse this from the comment in the public key file
+	flag.StringVar(&identity, "I", "", "Identity of signer")
 
 	flag.Parse()
 
@@ -38,6 +41,11 @@ func main() {
 	ref, err := name.ParseReference(image)
 	if err != nil {
 		fmt.Println("Cannot parse image name %s: ", image, err)
+		os.Exit(1)
+	}
+
+	if identity == "" {
+		fmt.Println("Need to specify an identity")
 		os.Exit(1)
 	}
 
@@ -72,7 +80,7 @@ func main() {
 
 	annotations := make(map[string]string)
 	for _, d := range im.Manifests {
-		as, err := signing.Sign(tp, d, keyFile)
+		as, err := signing.Sign(tp, d, keyFile, identity)
 		if err != nil {
 			fmt.Println("Signing error: ", err)
 			os.Exit(1)
@@ -87,14 +95,13 @@ func main() {
 	for update := range ch {
 		switch {
 		case update.Error != nil && errors.Is(update.Error, io.EOF):
-			fmt.Fprintf(os.Stderr, "receive error message: %v\n", err)
-			fmt.Printf("%d/%d", update.Complete, update.Total)
+			fmt.Fprintf(os.Stderr, "\n")
 			break
 		case update.Error != nil:
 			fmt.Printf("error writing tarball: %v\n", update.Error)
 			os.Exit(1)
 		default:
-			fmt.Fprintf(os.Stderr, "receive update: %#v\n", update)
+			fmt.Fprintf(os.Stderr, ".")
 		}
 	}
 
