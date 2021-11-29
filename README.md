@@ -14,7 +14,8 @@ content addressing issues, inline signing is the norm and the designs for detach
 but are still only being used for a few use cases. So this proposal for a design for inline signatures
 is not designed to replace references but to provide a signing framework that can be used now in any
 registry. It is not the design that you might want if you were designing the format from scratch, but
-it seems a clean design on top of the standards that already exist.
+it seems a clean design on top of the standards that already exist. Some applications require inline
+signatures as they need to refer to signed content, which you can by pointing at a signed index.
 
 Design constraints
 - works on all registries without changes
