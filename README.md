@@ -108,6 +108,11 @@ justin.cormack@docker.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAA
 You can still use this format for simple references by tag, eg you have an unsigned index, but you could push the signed one to
 `<digest>.sig` or some such convention.
 
+There is a large advantage to using a full index with signatures, in that verifying the signatures with this scheme will verify
+the desscriptor you are going to use to pull the image. This is a necessary part of validation and is easier for the client to
+so if it just gets a single index to validate. For references I would recomemnd that we include the full index data in the
+reference for this reason. 
+
 ## I want to sign SBOMs
 
 I think the SBOM should be stored as a manifest entry in the index too, with an annotation referencing the image it is for, and
