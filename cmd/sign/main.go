@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/justincormack/sign-index/pkg/signing"
@@ -78,16 +79,34 @@ func main() {
 		os.Exit(1)
 	}
 
-	annotations := make(map[string]string)
+	// copy media type and annotations into new empty index
+	signedIdx := mutate.IndexMediaType(empty.Index, im.MediaType)
+	adds := []mutate.IndexAddendum{}
 	for _, d := range im.Manifests {
 		as, err := signing.Sign(tp, d, keyFile, identity)
 		if err != nil {
 			fmt.Println("Signing error: ", err)
 			os.Exit(1)
 		}
-		annotations = util.AppendAnnotation(annotations, as)
+		var nd v1.Descriptor
+		d.DeepCopyInto(&nd)
+		if nd.Annotations == nil {
+			nd.Annotations = make(map[string]string)
+		}
+		img, err := idx.Image(d.Digest)
+		if err != nil {
+			fmt.Println("Cannot get image: ", err)
+			os.Exit(1)
+		}
+		nd.Annotations = util.AppendAnnotation(nd.Annotations, as)
+		adds = append(adds, mutate.IndexAddendum{
+			Add:        img,
+			Descriptor: nd,
+		})
 	}
-	signedIdx := mutate.Annotations(idx, annotations).(v1.ImageIndex)
+	signedIdx = mutate.AppendManifests(signedIdx, adds...)
+	signedIdx = mutate.Annotations(signedIdx, im.Annotations).(v1.ImageIndex)
+
 	ch := make(chan v1.Update, 100)
 	go func() {
 		_ = remote.WriteIndex(putRef, signedIdx, auth, remote.WithProgress(ch))

@@ -21,7 +21,7 @@ func main() {
 
 	flag.Parse()
 
-	// TODO platform, err
+	// TODO platform, err we are not using this yet, TODO add docker daemon pull and tag
 	_, err := util.ParsePlatform(platformName)
 	if err != nil {
 		fmt.Println("Cannot parse platform: ", err)
@@ -60,7 +60,7 @@ func main() {
 	}
 
 	for _, d := range manifest.Manifests {
-		err = signing.Verify(manifest.Annotations, d, allowed)
+		err = signing.Verify(d, allowed)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)

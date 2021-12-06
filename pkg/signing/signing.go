@@ -10,18 +10,18 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"strings"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 // this is a set of constants for names of annotations
-// they should become standardised and removed
 
 // SignatureVersion is the annotation label for signature version
 const SignatureVersion = "org.notaryproject.signature.version"
 
 // Version is the signature specification version
-const Version = "0.1"
+const Version = "0.2"
 
 // Descriptor is the annotation where the signed descriptor is stored
 const Descriptor = "org.notaryproject.signature.descriptor"
@@ -38,7 +38,10 @@ const SignatureIdentity = "org.notaryproject.signature.identity"
 // ssh namespace. We could just use "container" I guess too.
 const namespace = "org.notaryproject.sign"
 
-// Sign signs a given descriptor, returning annotations to add to the image index
+// annotation prefix for unverified annotations
+const prefix = "org.notaryproject.signature."
+
+// Sign signs a given descriptor, returning annotations to add
 func Sign(tp string, d v1.Descriptor, keyFile string, identity string) (map[string]string, error) {
 
 	// we are going to sign the descriptor as JSON bytes
@@ -47,20 +50,16 @@ func Sign(tp string, d v1.Descriptor, keyFile string, identity string) (map[stri
 		return nil, err
 	}
 
-	// need to pass the digest of the descriptor for looking up in annotations
-	// TODO add signer to suffix?
-	suffix := "." + d.Digest.String()
-
 	switch tp {
 	case "ssh":
-		return SignSSH(data, suffix, keyFile, identity)
+		return SignSSH(data, keyFile, identity)
 	default:
 		return nil, fmt.Errorf("Unsupported signature type: %s", tp)
 	}
 }
 
 // SignSSH signs using ssh signature, shells out to ssh-keygen.
-func SignSSH(data []byte, suffix string, keyFile string, identity string) (map[string]string, error) {
+func SignSSH(data []byte, keyFile string, identity string) (map[string]string, error) {
 	if keyFile == "" {
 		return nil, fmt.Errorf("Must specify keyfile for signing key")
 	}
@@ -69,13 +68,13 @@ func SignSSH(data []byte, suffix string, keyFile string, identity string) (map[s
 	a := make(map[string]string)
 
 	// version
-	a[SignatureVersion+suffix] = Version
+	a[SignatureVersion] = Version
 
 	// identity
-	a[SignatureIdentity+suffix] = identity
+	a[SignatureIdentity] = identity
 
 	// we store the signed descriptor as base64 in an annotation
-	a[Descriptor+suffix] = base64.StdEncoding.EncodeToString(data)
+	a[Descriptor] = base64.StdEncoding.EncodeToString(data)
 
 	// while there are libraries for using ssh in Go, they don't necessarily
 	// work with all configurations, such as hardware keys, so lets exec
@@ -88,39 +87,38 @@ func SignSSH(data []byte, suffix string, keyFile string, identity string) (map[s
 		return nil, fmt.Errorf("Error calling ssh-keygen: %s")
 	}
 	signature := out.Bytes()
-	a[SignatureType+suffix] = "ssh"
-	a[SignatureData+suffix] = base64.StdEncoding.EncodeToString(signature)
+	a[SignatureType] = "ssh"
+	a[SignatureData] = base64.StdEncoding.EncodeToString(signature)
 
 	return a, nil
 }
 
-// Verify will check a signature in the provided annotations against the provided descriptor
-func Verify(a map[string]string, verifyDesc v1.Descriptor, allowed string) error {
-	digest := verifyDesc.Digest.String()
-	suffix := "." + digest
-
-	version := a[SignatureVersion+suffix]
+// Verify will check a signature in the provided descriptor. Pass a file of allowed signers.
+func Verify(verifyDesc v1.Descriptor, allowed string) error {
+	a := verifyDesc.Annotations
+	version := a[SignatureVersion]
 	if version == "" {
-		return fmt.Errorf("Cannot find valid signature for digest %s (missing version)", digest)
+		return fmt.Errorf("Cannot find valid signature for digest %s (missing version)", verifyDesc.Digest.String())
 	}
 	if version != Version {
 		return fmt.Errorf("Signature version mismatch, expecting %s got %s\n", Version, version)
 	}
 
-	tp := a[SignatureType+suffix]
+	tp := a[SignatureType]
 	switch tp {
 	case "":
-		return fmt.Errorf("Cannot find valid signature for digest %s (missing type)", digest)
+		return fmt.Errorf("Cannot find valid signature for digest %s (missing type)", verifyDesc.Digest.String())
 	case "ssh":
-		return VerifySSH(a, suffix, verifyDesc, allowed)
+		return VerifySSH(verifyDesc, allowed)
 	default:
 		return fmt.Errorf("Unknown signature type: %s", tp)
 	}
 
 }
 
-func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, allowed string) error {
-	signedDescStr := a[Descriptor+suffix]
+func VerifySSH(verifyDesc v1.Descriptor, allowed string) error {
+	a := verifyDesc.Annotations
+	signedDescStr := a[Descriptor]
 	if signedDescStr == "" {
 		return fmt.Errorf("Cannot find valid signed descriptor")
 	}
@@ -133,12 +131,12 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, all
 	if err != nil {
 		return err
 	}
-	signatureStr := a[SignatureData+suffix]
+	signatureStr := a[SignatureData]
 	signature, err := base64.StdEncoding.DecodeString(signatureStr)
 	if err != nil {
 		return err
 	}
-	identity := a[SignatureIdentity+suffix]
+	identity := a[SignatureIdentity]
 
 	// save signature to a temporary file
 	sigFile, err := ioutil.TempFile("", "sig")
@@ -149,6 +147,7 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, all
 	_, err = io.Copy(sigFile, bytes.NewBuffer(signature))
 	if err != nil {
 		sigFile.Close()
+		os.Remove(sigFile.Name())
 		return err
 	}
 	sigFile.Close()
@@ -175,6 +174,9 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, all
 	// everything in the descriptor should be in the signed descriptor
 	// it is ok if there are more fields in the signed descriptor, eg expiry
 	// perhaps we should sort arrays before comparing?
+	// Alternatively, just use the signed descriptor not the original one, for
+	// example we can reconstruct a new index from the signed descriptors, rather
+	// than checking they match.
 	if signedDesc.MediaType != verifyDesc.MediaType {
 		return fmt.Errorf("Mismatch in media type in descriptor: signed %s verify %s", signedDesc.MediaType, verifyDesc.MediaType)
 	}
@@ -199,7 +201,7 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, all
 	if signedDesc.Platform.Architecture != verifyDesc.Platform.Architecture {
 		return fmt.Errorf("Mismatch platform architecture in descriptor: signed %s verify %s", signedDesc.Platform.Architecture, verifyDesc.Platform.Architecture)
 	}
-	if signedDesc.Platform.OS != verifyDesc.Platform.OS {	
+	if signedDesc.Platform.OS != verifyDesc.Platform.OS {
 		return fmt.Errorf("Mismatch platform OS in descriptor: signed %s verify %s", signedDesc.Platform.OS, verifyDesc.Platform.OS)
 	}
 	if signedDesc.Platform.OSVersion != verifyDesc.Platform.OSVersion {
@@ -225,6 +227,10 @@ func VerifySSH(a map[string]string, suffix string, verifyDesc v1.Descriptor, all
 		}
 	}
 	for k, v := range verifyDesc.Annotations {
+		// we did not sign the signature so skip these unverified fields
+		if strings.HasPrefix(k, prefix) {
+			continue
+		}
 		if signedDesc.Annotations[k] != v {
 			return fmt.Errorf("Mismatch in annotation %s in descriptor: signed %s verify %s", k, signedDesc.Annotations[k], v)
 		}
